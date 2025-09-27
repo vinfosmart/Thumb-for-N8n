@@ -1,0 +1,5 @@
+{
+  "name": "Gerador de Thumbnails IA para n8n",
+  "description": "Uma ferramenta avançada para gerar thumbnails de alta qualidade para o YouTube com sugestões de IA. Possui templates, fontes e cores personalizáveis, além de integração com n8n para automação de fluxos de trabalho.",
+  "requestFramePermissions": []
+}
