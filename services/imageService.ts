@@ -42,22 +42,29 @@ const generateWithGoogle = async (prompt: string, apiKey: string, model: string)
  * @returns A promise that resolves to a base64 data URL of the generated image.
  */
 const generateWithOpenAI = async (prompt: string, apiKey: string, model: string): Promise<string> => {
+    // FIX: Conditionally build the request body to avoid sending unsupported parameters.
+    const body: { [key: string]: any } = {
+        model: model,
+        prompt: prompt,
+        n: 1,
+        // DALL-E 3 supports widescreen, DALL-E 2 supports only square.
+        size: model === 'dall-e-2' ? '1024x1024' : '1792x1024',
+        response_format: 'b64_json', // Request base64 directly to avoid CORS issues
+    };
+
+    // FIX: The 'quality' parameter is only supported by 'dall-e-3'.
+    // Sending it to 'dall-e-2' causes an "Unknown parameter" error.
+    if (model === 'dall-e-3') {
+        body.quality = 'hd';
+    }
+
     const response = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-            model: model,
-            prompt: prompt,
-            n: 1,
-            // DALL-E 3 supports widescreen, DALL-E 2 supports only square.
-            // The API supports 1792x1024 for DALL-E 3 which is close to 16:9
-            size: model === 'dall-e-2' ? '1024x1024' : '1792x1024',
-            quality: (model === 'dall-e-3' || model === 'gpt-image-1') ? 'hd' : 'standard',
-            response_format: 'b64_json', // Request base64 directly to avoid CORS issues
-        }),
+        body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -94,20 +101,34 @@ const generateWithCustomProvider = async (prompt: string, config: ApiConfig): Pr
             model: customProvider.model,
             prompt: prompt,
             n: 1,
-            size: '1280x720',
+            // FIX: Changed size from '1280x720' to '1792x1024', a supported widescreen
+            // format for DALL-E 3, which is likely being proxied and caused 'Invalid value' errors.
+            size: '1792x1024',
             response_format: 'b64_json',
         }),
     });
 
     if (!response.ok) {
         const errorText = await response.text();
+        // Try to parse as JSON for a more specific error message
+        try {
+            const errorJson = JSON.parse(errorText);
+            if (errorJson.error && errorJson.error.message) {
+                 throw new Error(`Erro na API do provedor customizado (${response.status}): ${errorJson.error.message}`);
+            }
+        } catch (e) {
+            // Fallback to plain text if not JSON
+        }
         throw new Error(`Erro na API do provedor customizado (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
     // Assuming the API returns a base64 string in a similar format to OpenAI
     if (!data.data || !data.data[0] || !data.data[0].b64_json) {
-        throw new Error("Resposta do provedor customizado em formato inesperado.");
+        if (data.error && data.error.message) {
+             throw new Error(`API do provedor customizado retornou um erro: ${data.error.message}`);
+        }
+        throw new Error("Resposta do provedor customizado em formato inesperado. Esperava 'data[0].b64_json'.");
     }
     const base64Json = data.data[0].b64_json; 
     return `data:image/png;base64,${base64Json}`;

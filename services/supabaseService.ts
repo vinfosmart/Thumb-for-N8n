@@ -1,129 +1,127 @@
-import { createClient, Session, User } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ApiConfig, HistoryItem } from '../types';
 
-// IMPORTANT: Replace with your actual Supabase Project URL and Anon Key
-const supabaseUrl = 'https://goywroslhhuowufplord.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdveXdyb3NsaGh1b3d1ZnBsb3JkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMDE0NzAsImV4cCI6MjA3NDU3NzQ3MH0.1DSO-mByuIKydvoUAfv8JZ1qoy0aOa7TQfRRais70cA';
-
-// Check if the placeholder values have been replaced
-export const isSupabaseConfigured = !supabaseUrl.includes('COLE_SUA_PROJECT_URL_AQUI') && !supabaseAnonKey.includes('COLE_SUA_ANON_KEY_AQUI');
-
-// Conditionally create the client to avoid crashing the app
-export const supabase = isSupabaseConfigured
-    ? createClient(supabaseUrl, supabaseAnonKey)
-    : null;
-
-// --- Authentication ---
-
-export const signInWithGoogle = async () => {
-  if (!supabase) return;
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: {
-      redirectTo: window.location.origin,
-    },
-  });
-  if (error) {
-    console.error('Erro no login com Google:', error);
-  }
+/**
+ * Creates a new Supabase client instance with user-provided credentials.
+ * @param supabaseUrl - The project URL from the user's Supabase dashboard.
+ * @param supabaseAnonKey - The anon public key from the user's Supabase dashboard.
+ * @returns A SupabaseClient instance.
+ */
+export const createSupabaseClient = (supabaseUrl: string, supabaseAnonKey: string): SupabaseClient => {
+    return createClient(supabaseUrl, supabaseAnonKey);
 };
-
-export const signOut = async () => {
-  if (!supabase) return;
-  await supabase.auth.signOut();
-};
-
-export const getSession = async (): Promise<Session | null> => {
-    if (!supabase) return null;
-    const { data } = await supabase.auth.getSession();
-    return data.session;
-};
-
-export const getUser = async (): Promise<User | null> => {
-    if (!supabase) return null;
-    const { data } = await supabase.auth.getUser();
-    return data.user;
-}
 
 // --- API Configs ---
+// Assumes a single configuration row per project.
 
-export const getApiConfig = async (): Promise<ApiConfig | null> => {
-    const user = await getUser();
-    if (!user) return null;
+export const getApiConfig = async (client: SupabaseClient): Promise<ApiConfig | null> => {
+    if (!client) return null;
 
-    const { data, error } = await supabase
+    const { data, error } = await client
         .from('api_configs')
         .select('config')
-        .eq('user_id', user.id)
+        .limit(1)
         .single();
 
     if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
-        console.error('Erro ao buscar config:', error);
+        console.error('Erro ao buscar config:', error.message);
         return null;
     }
     return data ? data.config as ApiConfig : null;
 };
 
-export const saveApiConfig = async (config: ApiConfig): Promise<void> => {
-    const user = await getUser();
-    if (!user) return;
+export const saveApiConfig = async (client: SupabaseClient, config: ApiConfig): Promise<void> => {
+    if (!client) return;
 
-    const { error } = await supabase
+    // We use a fixed ID of 1 to always update the same single row.
+    const { error } = await client
         .from('api_configs')
-        .upsert({ user_id: user.id, config: config }, { onConflict: 'user_id' });
+        .upsert({ id: 1, config: config });
     
     if (error) {
-        console.error('Erro ao salvar config:', error);
+        console.error('Erro ao salvar config:', error.message);
     }
 };
 
 // --- History ---
 
-export const getHistory = async (): Promise<HistoryItem[] | null> => {
-    const user = await getUser();
-    if (!user) return null;
+export const getHistory = async (client: SupabaseClient): Promise<HistoryItem[] | null> => {
+    if (!client) return null;
 
-    const { data, error } = await supabase
+    // FIX: Use correct snake_case column names from the database in the select query.
+    const { data, error } = await client
         .from('history')
-        .select('*')
-        .eq('user_id', user.id)
+        .select('id, title, subtitle, image_prompt, image_url, created_at')
         .order('created_at', { ascending: false })
         .limit(20);
     
     if (error) {
-        console.error('Erro ao buscar histórico:', error);
+        console.error('Erro ao buscar histórico:', error.message);
         return null;
     }
-    return data.map(item => ({...item, created_at: item.created_at}));
+    // FIX: Manually map snake_case properties from Supabase to camelCase properties in HistoryItem.
+    // The Supabase client does not automatically perform this mapping without generated types,
+    // which caused a type mismatch.
+    if (!data) {
+        return [];
+    }
+    return data.map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        subtitle: item.subtitle,
+        imagePrompt: item.image_prompt,
+        imageUrl: item.image_url,
+        created_at: item.created_at,
+    }));
 };
 
-export const addHistoryItem = async (item: { title: string, imageUrl: string }): Promise<HistoryItem | null> => {
-    const user = await getUser();
-    if (!user) return null;
+export const addHistoryItem = async (client: SupabaseClient, item: Omit<HistoryItem, 'id' | 'created_at'>): Promise<HistoryItem | null> => {
+    if (!client) return null;
 
-    const { data, error } = await supabase
+    // The client automatically maps camelCase keys from the 'item' object to snake_case columns.
+    // The select string needs to use the actual database column names.
+    const { data, error } = await client
         .from('history')
-        .insert({ ...item, user_id: user.id })
-        .select()
+        .insert({
+            title: item.title,
+            subtitle: item.subtitle,
+            image_prompt: item.imagePrompt,
+            image_url: item.imageUrl,
+        })
+        .select('id, title, subtitle, image_prompt, image_url, created_at')
         .single();
 
     if (error) {
-        console.error('Erro ao adicionar item ao histórico:', error);
+        console.error('Erro ao adicionar item ao histórico:', error.message);
         return null;
     }
-    return {...data, created_at: data.created_at};
+    
+    // FIX: Manually map snake_case properties from Supabase to camelCase properties in HistoryItem.
+    // The direct cast was failing because the property names did not match the HistoryItem interface.
+    if (!data) {
+        return null;
+    }
+    const result: HistoryItem = {
+        id: data.id,
+        title: data.title,
+        subtitle: data.subtitle,
+        imagePrompt: (data as any).image_prompt,
+        imageUrl: (data as any).image_url,
+        created_at: data.created_at,
+    };
+    return result;
 };
 
-export const clearHistory = async (): Promise<void> => {
-    const user = await getUser();
-    if (!user) return;
-
-    const { error } = await supabase
+export const clearHistory = async (client: SupabaseClient): Promise<void> => {
+    if (!client) return;
+    
+    // Deletes all rows in the history table.
+    const { error } = await client
         .from('history')
         .delete()
-        .eq('user_id', user.id);
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Dummy condition to delete all
     
     if (error) {
-        console.error('Erro ao limpar histórico:', error);
+        console.error('Erro ao limpar histórico:', error.message);
     }
 };

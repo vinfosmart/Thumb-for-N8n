@@ -25,31 +25,27 @@ export const GOOGLE_IMAGE_MODELS: ImageModel[] = [
     description: 'Versão otimizada para velocidade. Ótimo para testes e quando a velocidade é mais importante que a qualidade máxima.'
   },
   {
-    id: 'gemini-2.5-flash-image-preview',
-    name: 'Gemini 2.5 Flash (Edição/Preview)',
-    cost: 'Gratuito (Preview)',
-    description: 'Também conhecido como "Nano Banana". ATENÇÃO: Este modelo é primariamente para EDIÇÃO de imagens. Usá-lo para geração a partir de texto pode causar erros (404 Not Found).'
-  }
+    id: 'imagen-3.0-generate-001',
+    name: 'Imagen 3.0 (Equilibrado)',
+    cost: '~$0.020 / img',
+    description: 'Modelo anterior, excelente equilíbrio entre qualidade, velocidade e custo. Ótima opção para uso geral.'
+  },
+  // REMOVED: 'gemini-2.5-flash-image-preview' is for editing, not generation, and causes errors.
+  // Keeping it in the list confuses users and leads to failed API calls.
 ];
 
 export const OPENAI_IMAGE_MODELS: ImageModel[] = [
   { 
-    id: 'gpt-image-1', 
-    name: 'GPT-Image 1 (Mais Novo)',
-    cost: '~$0.08 / img',
-    description: 'Modelo mais recente e avançado, com recursos multimodais para maior precisão e realismo.'
-  },
-  { 
     id: 'dall-e-3', 
     name: 'DALL-E 3',
     cost: '~$0.04 / img',
-    description: 'Alta qualidade, ótima interpretação de prompts complexos.'
+    description: 'Alta qualidade, ótima interpretação de prompts complexos e suporte a diversos tamanhos de imagem.'
   },
   { 
     id: 'dall-e-2', 
     name: 'DALL-E 2',
     cost: '~$0.02 / img (Nível Gratuito Disponível)',
-    description: 'Modelo mais antigo, versátil para edições e variações. Gera apenas imagens quadradas.'
+    description: 'Modelo mais antigo, versátil para edições e variações. ATENÇÃO: Gera apenas imagens quadradas.'
   },
 ];
 

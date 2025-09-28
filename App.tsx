@@ -1,19 +1,16 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
-import { Session } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { ThumbnailState, ApiConfig, HistoryItem } from './types';
 import CanvasRenderer from './components/CanvasRenderer';
 import ControlPanel from './components/ControlPanel';
 import Header from './components/Header';
-import Login from './components/Login';
+import SupabaseCredentials from './components/SupabaseCredentials';
+import SettingsModal from './components/SettingsModal';
 import { generateSubtitleAndColors, generateFullConceptFromTitle } from './services/geminiService';
 import { generateBackgroundImage } from './services/imageService';
 import { uploadImageToDrive } from './services/googleDriveService';
-import { supabase, isSupabaseConfigured } from './services/supabaseService';
 import * as db from './services/supabaseService';
-import { TEXT_STYLE_PRESETS, GOOGLE_IMAGE_MODELS, OPENAI_IMAGE_MODELS } from './constants';
-import AddProviderModal from './components/AddProviderModal';
-import SupabaseSetupMessage from './components/SupabaseSetupMessage';
+import { TEXT_STYLE_PRESETS } from './constants';
 
 const initialThumbnailState: ThumbnailState = {
   templateId: 'ai',
@@ -30,7 +27,20 @@ const initialThumbnailState: ThumbnailState = {
 };
 
 const App: React.FC = () => {
-  const [session, setSession] = useState<Session | null>(null);
+  // FIX: Initialize state directly from localStorage to prevent reset on hot-reloads.
+  const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(() => {
+    try {
+      const storedUrl = localStorage.getItem('supabaseUrl');
+      const storedKey = localStorage.getItem('supabaseAnonKey');
+      if (storedUrl && storedKey) {
+        return db.createSupabaseClient(storedUrl, storedKey);
+      }
+    } catch (e) {
+      console.error("Failed to initialize Supabase client from localStorage", e);
+    }
+    return null;
+  });
+
   const [loadingApp, setLoadingApp] = useState(true);
 
   const [thumbnailState, setThumbnailState] = useState<ThumbnailState>(initialThumbnailState);
@@ -44,47 +54,29 @@ const App: React.FC = () => {
     provider: 'google',
     openAIApiKey: '',
     googleApiKey: '',
-    googleModel: GOOGLE_IMAGE_MODELS[0].id,
-    openAIModel: OPENAI_IMAGE_MODELS[0].id,
+    googleModel: 'imagen-4.0-generate-001',
+    openAIModel: 'dall-e-3',
     customProviders: [],
     isAutonomous: false,
     googleDriveScriptUrl: '',
-    selectedStyleId: null,
+    selectedStyleId: 'moderno',
     webhookUrl: '',
     n8nApiKey: '',
   });
   
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   const triggerWebhookRef = React.useRef<() => Promise<void>>(async () => {});
 
+  // Fetch user data once the client is available
   useEffect(() => {
-    if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        setSession(session);
-        // Initial load is done, regardless of session status
-        setLoadingApp(false);
-      });
-
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        setSession(session);
-      });
-
-      return () => subscription.unsubscribe();
-    } else {
-        // If supabase is not configured, we stop the main loading spinner
-        setLoadingApp(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (session) {
+    if (supabaseClient) {
         const fetchUserData = async () => {
             setLoadingApp(true);
             const [configData, historyData] = await Promise.all([
-                db.getApiConfig(),
-                db.getHistory()
+                db.getApiConfig(supabaseClient),
+                db.getHistory(supabaseClient)
             ]);
 
             if (configData) {
@@ -106,34 +98,37 @@ const App: React.FC = () => {
         const imagePromptFromUrl = urlParams.get('image_prompt');
         if (topicFromUrl) setTopic(decodeURIComponent(topicFromUrl));
         if (imagePromptFromUrl) setImagePrompt(decodeURIComponent(imagePromptFromUrl));
-
+    } else {
+        setLoadingApp(false);
     }
-  }, [session]);
+  }, [supabaseClient]);
 
 
-  const updateHistoryAndTriggerActions = useCallback(async (title: string, imageUrl: string) => {
-    const newHistoryItem = await db.addHistoryItem({ title, imageUrl });
+  const updateHistoryAndTriggerActions = useCallback(async (item: Omit<HistoryItem, 'id' | 'created_at'>) => {
+    if (!supabaseClient) return;
+    const { title, imageUrl } = item;
+    const newHistoryItem = await db.addHistoryItem(supabaseClient, item);
     if (newHistoryItem) {
         setHistory(prevHistory => [newHistoryItem, ...prevHistory].slice(0, 20));
     }
 
-    if (apiConfig.googleDriveScriptUrl) {
+    if (apiConfig.googleDriveScriptUrl && imageUrl) {
         uploadImageToDrive(apiConfig.googleDriveScriptUrl, imageUrl, `${title.replace(/ /g, '_')}.jpg`)
           .catch(err => console.error("Falha ao enviar para o Google Drive:", err));
     }
     if (apiConfig.isAutonomous) {
       setTimeout(() => triggerWebhookRef.current(), 100); 
     }
-  }, [apiConfig.googleDriveScriptUrl, apiConfig.isAutonomous, triggerWebhookRef]);
+  }, [apiConfig.googleDriveScriptUrl, apiConfig.isAutonomous, triggerWebhookRef, supabaseClient]);
 
   const handleGenerate = useCallback(async (currentTopic: string, currentImagePrompt: string) => {
     if (!apiConfig.googleApiKey) {
-      setError("A chave de API do Google é necessária para gerar o subtítulo. Por favor, configure-a.");
+      setError("A chave de API do Google é necessária para gerar o subtítulo. Por favor, configure-a no menu de configurações (⚙️).");
       return;
     }
     const customProvider = apiConfig.provider !== 'google' && apiConfig.provider !== 'openai' ? apiConfig.customProviders.find(p => p.id === apiConfig.provider) : null;
     if ((apiConfig.provider === 'openai' && !apiConfig.openAIApiKey) || (apiConfig.provider === 'google' && !apiConfig.googleApiKey) || (customProvider && !customProvider.apiKey)) {
-      setError("Chave de API não configurada para o provedor de imagem selecionado.");
+      setError("Chave de API não configurada para o provedor de imagem selecionado. Configure-a no menu de configurações (⚙️).");
       return;
     }
     setLoading(true); setError(null);
@@ -148,7 +143,12 @@ const App: React.FC = () => {
         backgroundImageUrl: imageUrl,
       };
       setThumbnailState(finalState);
-      await updateHistoryAndTriggerActions(currentTopic, imageUrl);
+      await updateHistoryAndTriggerActions({
+        title: currentTopic,
+        subtitle: concept.subtitle,
+        imagePrompt: currentImagePrompt,
+        imageUrl: imageUrl,
+      });
     } catch (error) {
       console.error("Erro na geração:", error);
       setError(error instanceof Error ? error.message : "Falha ao gerar thumbnail.");
@@ -159,12 +159,12 @@ const App: React.FC = () => {
   
   const handleQuickTestGenerate = useCallback(async (testTopic: string) => {
     if (!apiConfig.googleApiKey) {
-      setError("A chave de API do Google é necessária para o teste rápido.");
+      setError("A chave de API do Google é necessária para o teste rápido. Configure-a no menu de configurações (⚙️).");
       return;
     }
     const customProvider = apiConfig.provider !== 'google' && apiConfig.provider !== 'openai' ? apiConfig.customProviders.find(p => p.id === apiConfig.provider) : null;
     if ((apiConfig.provider === 'openai' && !apiConfig.openAIApiKey) || (apiConfig.provider === 'google' && !apiConfig.googleApiKey) || (customProvider && !customProvider.apiKey)) {
-      setError("Chave de API não configurada para o provedor de imagem selecionado.");
+      setError("Chave de API não configurada para o provedor de imagem selecionado. Configure-a no menu de configurações (⚙️).");
       return;
     }
     setLoading(true); setError(null);
@@ -180,7 +180,12 @@ const App: React.FC = () => {
         backgroundImageUrl: imageUrl,
       };
       setThumbnailState(finalState);
-      await updateHistoryAndTriggerActions(testTopic, imageUrl);
+      await updateHistoryAndTriggerActions({
+        title: testTopic,
+        subtitle: concept.subtitle,
+        imagePrompt: concept.imagePrompt,
+        imageUrl: imageUrl,
+      });
     } catch (error) {
       console.error("Erro na geração de teste:", error);
       setError(error instanceof Error ? error.message : "Falha ao gerar thumbnail de teste.");
@@ -190,31 +195,63 @@ const App: React.FC = () => {
   }, [apiConfig, updateHistoryAndTriggerActions]);
 
   const handleApiConfigChange = (newConfig: Partial<ApiConfig>) => {
+    if (!supabaseClient) return;
     const updatedConfig = { ...apiConfig, ...newConfig };
     setApiConfig(updatedConfig);
-    db.saveApiConfig(updatedConfig);
+    db.saveApiConfig(supabaseClient, updatedConfig);
+     // If the style changes, update the canvas preview immediately
+    if (newConfig.selectedStyleId) {
+      const style = TEXT_STYLE_PRESETS.find(s => s.id === newConfig.selectedStyleId);
+      if (style) {
+        setThumbnailState(prev => ({
+          ...prev,
+          titleFont: style.titleFont,
+          subtitleFont: style.subtitleFont,
+          titleColor: style.titleColor,
+          subtitleColor: style.subtitleColor,
+        }));
+      }
+    }
   };
   
   const clearHistory = async () => {
-    await db.clearHistory();
+    if (!supabaseClient) return;
+    await db.clearHistory(supabaseClient);
     setHistory([]);
   }
 
-  if (!isSupabaseConfigured) {
-      return <SupabaseSetupMessage />;
-  }
+  const handleConnectSupabase = (url: string, key: string) => {
+    localStorage.setItem('supabaseUrl', url);
+    localStorage.setItem('supabaseAnonKey', key);
+    const client = db.createSupabaseClient(url, key);
+    setSupabaseClient(client);
+  };
+
+  const handleDisconnectSupabase = () => {
+    localStorage.removeItem('supabaseUrl');
+    localStorage.removeItem('supabaseAnonKey');
+    setSupabaseClient(null);
+    setApiConfig({ // Reset config to default
+      provider: 'google', openAIApiKey: '', googleApiKey: '',
+      googleModel: 'imagen-4.0-generate-001', openAIModel: 'dall-e-3',
+      customProviders: [], isAutonomous: false, googleDriveScriptUrl: '',
+      selectedStyleId: 'moderno', webhookUrl: '', n8nApiKey: '',
+    });
+    setHistory([]);
+    setIsSettingsModalOpen(false);
+  };
 
   if (loadingApp) {
-      return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
+      return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">Carregando...</div>;
   }
 
-  if (!session) {
-      return <Login />;
+  if (!supabaseClient) {
+      return <SupabaseCredentials onConnect={handleConnectSupabase} />;
   }
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col">
-      <Header user={session.user} />
+      <Header onSettingsClick={() => setIsSettingsModalOpen(true)} />
       <main className="flex-grow p-4 md:p-6 flex flex-col gap-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1 bg-gray-800 rounded-2xl shadow-lg flex flex-col overflow-hidden">
@@ -227,7 +264,6 @@ const App: React.FC = () => {
                     imagePrompt={imagePrompt}
                     apiConfig={apiConfig}
                     onApiConfigChange={handleApiConfigChange}
-                    onManageProvidersClick={() => setIsModalOpen(true)}
                     triggerWebhookRef={triggerWebhookRef}
                     thumbnailState={thumbnailState}
                 />
@@ -237,12 +273,13 @@ const App: React.FC = () => {
             </div>
         </div>
         
-        {isModalOpen && (
-          <AddProviderModal
-            isOpen={isModalOpen}
-            onClose={() => setIsModalOpen(false)}
-            onSave={(providers) => handleApiConfigChange({ customProviders: providers })}
-            existingProviders={apiConfig.customProviders}
+        {isSettingsModalOpen && (
+          <SettingsModal
+            isOpen={isSettingsModalOpen}
+            onClose={() => setIsSettingsModalOpen(false)}
+            apiConfig={apiConfig}
+            onApiConfigChange={handleApiConfigChange}
+            onDisconnect={handleDisconnectSupabase}
           />
         )}
 

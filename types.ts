@@ -1,3 +1,5 @@
+import { SupabaseClient } from '@supabase/supabase-js';
+
 export type ApiProvider = 'google' | 'openai';
 
 export interface CustomProviderConfig {
@@ -66,10 +68,11 @@ export interface AIFullConcept {
 
 export interface HistoryItem {
   id: string; // UUID from database
-  user_id?: string;
   title: string;
+  subtitle: string;
+  imagePrompt: string;
   imageUrl: string;
-  created_at: string; // Renamed for consistency
+  created_at: string;
 }
 
 export interface TextStylePreset {
@@ -79,4 +82,9 @@ export interface TextStylePreset {
   subtitleFont: string;
   titleColor: string;
   subtitleColor: string;
+}
+
+export interface AppServices {
+    supabaseClient: SupabaseClient;
+    setSupabaseClient: React.Dispatch<React.SetStateAction<SupabaseClient | null>>;
 }
