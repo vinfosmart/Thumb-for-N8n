@@ -1,0 +1,30 @@
+# Dependências - Nunca envie esta pasta para o repositório
+/node_modules
+
+# Arquivos de build - Gerados automaticamente
+/build
+/dist
+/out
+
+# Arquivos de ambiente - MUITO IMPORTANTE PARA SEGURANÇA
+# Contêm chaves de API e outras informações sensíveis.
+.env
+.env.local
+.env.*.local
+
+# Arquivos de log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Configurações de editores de código
+.vscode/
+.idea/
+*.swp
+
+# Arquivos de sistema operacional
+.DS_Store
+Thumbs.db
+
+# Relatórios de testes
+/coverage
